@@ -118,7 +118,7 @@ button {
 }
 .brand p {
   font-size:12px;
-  color:(--muted);
+  color:var(--muted);
   margin-top:3px
 }
 .login-title {
@@ -1960,7 +1960,7 @@ button,input,select,textarea{max-width:100%}
 
 </head>
  <body>
-<div id="cloudConnectionBadge" style="position:fixed;right:14px;bottom:14px;z-index:9998;padding:8px 12px;border-radius:999px;background:#111827;color:#fff;font:600 12px Arial,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.18);cursor:pointer" title="Klik untuk tes koneksi Supabase" onclick="testSupabaseConnection(true)">☁️ Offline / Lokal</div>
+<div id="cloudConnectionBadge" style="position:fixed;right:14px;bottom:14px;z-index:9998;padding:8px 12px;border-radius:999px;background:#111827;color:#fff;font:600 12px Arial,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.18);cursor:pointer" title="Klik untuk tes koneksi Supabase" onclick="handleCloudBadgeClick()">☁️ Offline / Lokal</div>
 
   <div id="smoothTransition" aria-hidden="true"></div>
   <!-- LOGIN -->
@@ -3415,8 +3415,8 @@ if(document.readyState==="loading"){
    Data absensi utama akan memakai database online; localStorage hanya
    menjadi cache agar tampilan tetap cepat ketika jaringan berfluktuasi.
    ========================================================= */
-const SUPABASE_URL="PASTE_SUPABASE_URL_DI_SINI";
-const SUPABASE_ANON_KEY="PASTE_SUPABASE_ANON_KEY_DI_SINI";
+const SUPABASE_URL="https://ssdcmavojemhwlmgjbvx.supabase.co";
+const SUPABASE_ANON_KEY="sb_publishable_cPkmTWm3pjg2bLXZYp73XA_4xvP28zg";
 // Jika konfigurasi di atas masih placeholder, website akan mencoba membaca
 // konfigurasi yang disimpan pada browser. Ini memudahkan pengujian tanpa
 // mengubah seluruh sistem absensi. Untuk GitHub Pages, setelah berhasil diuji,
@@ -3433,6 +3433,9 @@ let cloudReady=false;
 let cloudCache=[];
 let cloudRealtimeChannel=null;
 let cloudSyncInProgress=false;
+let cloudReconnectTimer=null;
+let cloudLastError="";
+
 
 let supabaseLibraryPromise=null;
 function ensureSupabaseLibrary(){
@@ -3505,9 +3508,31 @@ function cacheCloudAttendance(rows){
 function updateCloudBadge(){
   const el=$("cloudConnectionBadge");
   if(!el)return;
-  if(cloudReady){el.textContent="☁️ Online • Realtime";el.style.background="#166534";el.title="Supabase aktif. Klik untuk tes koneksi."}
-  else if(isSupabaseConfigured()){el.textContent="☁️ Menghubungkan...";el.style.background="#92400e"}
-  else{el.textContent="☁️ Offline / Lokal";el.style.background="#111827"}
+  if(cloudReady){
+    el.textContent="☁️ Online • Realtime";
+    el.style.background="#166534";
+    el.title="Supabase aktif. Klik untuk tes koneksi.";
+  }else if(isSupabaseConfigured()){
+    el.textContent="☁️ Menghubungkan...";
+    el.style.background="#92400e";
+    el.title="Supabase dikonfigurasi tetapi belum tersambung. Klik untuk mencoba lagi.";
+  }else{
+    el.textContent="☁️ Offline / Lokal";
+    el.style.background="#111827";
+    el.title="Supabase belum dikonfigurasi. Klik untuk memasukkan URL + Anon/Publishable Key.";
+  }
+}
+function handleCloudBadgeClick(){
+  if(isSupabaseConfigured()) testSupabaseConnection(true);
+  else configureSupabaseFromPrompt();
+}
+function scheduleCloudReconnect(){
+  if(cloudReconnectTimer||!isSupabaseConfigured())return;
+  cloudReconnectTimer=setTimeout(async()=>{
+    cloudReconnectTimer=null;
+    if(!cloudReady) await hydrateAttendanceFromCloud(false);
+    if(!cloudReady) scheduleCloudReconnect();
+  },15000);
 }
 function refreshCurrentViews(){
   if(!role)return;
@@ -3522,9 +3547,9 @@ function refreshCurrentViews(){
 async function hydrateAttendanceFromCloud(showMessage=false){
   if(!(await initSupabaseClient())){
     cloudReady=false;
-    cloudCache=[];
     updateCloudBadge();
     try{cloudCache=JSON.parse(localStorage.getItem("attendanceData")||"[]")}catch{cloudCache=[]}
+    scheduleCloudReconnect();
     if(showMessage)toast("Mode database belum aktif. Masukkan URL dan Anon Key Supabase di kode HTML.","warning","Supabase Belum Dikonfigurasi");
     return false;
   }
@@ -3532,14 +3557,19 @@ async function hydrateAttendanceFromCloud(showMessage=false){
     const {data,error}=await supabaseClient.from("attendance").select("*").order("created_at",{ascending:true});
     if(error)throw error;
     cloudReady=true;
+    cloudLastError="";
+    if(cloudReconnectTimer){clearTimeout(cloudReconnectTimer);cloudReconnectTimer=null;}
     updateCloudBadge();
     cacheCloudAttendance(data||[]);
     subscribeAttendanceRealtime();
     startCloudPolling();
+    await syncExistingAttendanceToCloud();
     return true;
   }catch(error){
     cloudReady=false;
+    cloudLastError=String(error?.message||error||"unknown");
     updateCloudBadge();
+    scheduleCloudReconnect();
     console.error("Supabase hydrate error:",error);
     if(showMessage)toast("Database online belum dapat diakses. Periksa URL, key, tabel, dan RLS Supabase.","error","Koneksi Database Gagal");
     return false;
@@ -3548,7 +3578,10 @@ async function hydrateAttendanceFromCloud(showMessage=false){
 let cloudPollTimer=null;
 let cloudLastPollAt=0;
 async function pollAttendanceCloud(force=false){
-  if(!cloudReady||!supabaseClient)return false;
+  if(!cloudReady||!supabaseClient){
+    if(isSupabaseConfigured()) scheduleCloudReconnect();
+    return false;
+  }
   if(!force && Date.now()-cloudLastPollAt<4000)return false;
   cloudLastPollAt=Date.now();
   try{
@@ -3584,7 +3617,14 @@ function subscribeAttendanceRealtime(){
       localStorage.setItem("attendanceData",JSON.stringify(cloudCache));
       refreshCurrentViews();
       if(role==="dosen")toast("📡 Data absensi diperbarui realtime.","success","Sinkronisasi Realtime");
-    }).subscribe(status=>console.log("Supabase realtime:",status));
+    }).subscribe(status=>{
+      console.log("Supabase realtime:",status);
+      if(["CHANNEL_ERROR","TIMED_OUT","CLOSED"].includes(status)){
+        console.warn("Realtime tidak aktif:",status,"Polling 5 detik tetap menjadi cadangan.");
+        cloudReady=!!supabaseClient;
+        updateCloudBadge();
+      }
+    });
 }
 async function insertAttendanceCloud(record){
   if(!cloudReady||!supabaseClient)return true;
@@ -4657,22 +4697,29 @@ function exportStudentCSV(){
 async function testSupabaseConnection(show=true){
   const configured=isSupabaseConfigured();
   if(!configured){
-    if(show)toast("Supabase belum dikonfigurasi. Masukkan URL project dan Anon/Publishable Key.","warning","Database Offline");
+    if(show)toast("Supabase belum dikonfigurasi. Klik tombol cloud lalu masukkan URL + Anon/Publishable Key.","warning","Database Offline");
     return {ok:false,reason:"not-configured"};
   }
   try{
-    await initSupabaseClient();
-    const {error}=await supabaseClient.from("attendance").select("id",{count:"exact",head:true});
+    const initialized=await initSupabaseClient();
+    if(!initialized)throw new Error("Library Supabase gagal dimuat.");
+    const {data,error}=await supabaseClient.from("attendance").select("id",{count:"exact",head:true});
     if(error)throw error;
     cloudReady=true;
+    cloudLastError="";
+    updateCloudBadge();
     subscribeAttendanceRealtime();
     startCloudPolling();
-    if(show)toast("Database Supabase tersambung. Sinkronisasi online aktif.","success","Online");
-    return {ok:true};
+    await syncExistingAttendanceToCloud();
+    if(show)toast("Database Supabase tersambung. Sinkronisasi online + cadangan polling aktif.","success","Online");
+    return {ok:true,data};
   }catch(err){
     cloudReady=false;
+    cloudLastError=String(err?.message||err||"unknown");
+    updateCloudBadge();
+    scheduleCloudReconnect();
     console.error("Tes Supabase gagal:",err);
-    if(show)toast("Supabase terhubung tetapi tabel/RLS belum siap. Periksa tabel attendance dan kebijakan RLS.","error","Database Belum Siap");
+    if(show)toast("Database belum siap. Pastikan tabel attendance, RLS, dan Realtime sudah diatur.","error","Database Belum Siap");
     return {ok:false,reason:"database",error:err};
   }
 }
