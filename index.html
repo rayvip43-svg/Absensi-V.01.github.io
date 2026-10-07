@@ -4389,7 +4389,9 @@ function scannerConfig(){
     },
     disableFlip:false,
     rememberLastUsedCamera:false,
-    experimentalFeatures:{useBarCodeDetectorIfSupported:true}
+    experimentalFeatures:{useBarCodeDetectorIfSupported:false},
+    formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE],
+    aspectRatio:1.7777778
   };
 }
 let nativeBarcodeStream=null;
@@ -4522,7 +4524,9 @@ function normalizeQRPayload(text){
       if(p.length<6)throw new Error("BAD_ABS_QR");
       const token=String(p[1]||"").trim();
       const nip=String(p[2]||"").trim();
-      const mataKuliah=decodeURIComponent(String(p.slice(3,p.length-2).join("|")||"")).trim();
+      let mataKuliah=String(p.slice(3,p.length-2).join("|")||"").trim();
+      try{mataKuliah=decodeURIComponent(mataKuliah)}catch{}
+      mataKuliah=mataKuliah.trim();
       const pertemuan=String(p[p.length-2]||"").trim();
       let berakhir=Number(String(p[p.length-1]||"").trim());
       if(berakhir>0&&berakhir<100000000000)berakhir*=1000;
@@ -4798,7 +4802,7 @@ async function generateQR(){
     }
   }
   $("qrTitle").textContent=`${info.course} • Pertemuan ${p}`;$("qrToken").textContent=token;
-  $("qrcode").innerHTML="";const qrText=["ABS",token,info.nip,encodeURIComponent(info.course),String(p),String(end)].join("|");
+  $("qrcode").innerHTML="";const qrText=["ABS",token,info.nip,info.course,String(p),String(end)].join("|");
   new QRCode($("qrcode"),{text:qrText,width:320,height:320,colorDark:"#0f172a",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.M});
   clearInterval(qrTimer);qrTimer=setInterval(updateQRTimer,1000);updateQRTimer();updateLecturerStats();renderLiveMonitor();toast("QR absensi berhasil dibuat.");
 }
