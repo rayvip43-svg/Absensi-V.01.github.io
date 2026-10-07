@@ -4388,10 +4388,10 @@ async function checkCameraHealth(){
 }
 function scannerConfig(){
   return {
-    fps:10,
+    fps:15,
     qrbox:(w,h)=>{
-      const shortest=Math.min(Number(w)||360,Number(h)||360);
-      const size=Math.max(190,Math.min(420,Math.floor(shortest*.82)));
+      const shortest=Math.min(Number(w)||480,Number(h)||480);
+      const size=Math.max(240,Math.min(520,Math.floor(shortest*.90)));
       return {width:size,height:size};
     },
     disableFlip:false,
@@ -4411,28 +4411,26 @@ function startJsQrFallback(){
   if(!window.jsQR)return false;
   const reader=$("reader"),video=reader?.querySelector("video");
   if(!video)return false;
-  jsQrCanvas=document.createElement("canvas");
-  jsQrCanvas.style.display="none";
-  const ctx=jsQrCanvas.getContext("2d",{willReadFrequently:true});
-  if(!ctx)return false;
+  jsQrCanvas=document.createElement("canvas"); jsQrCanvas.style.display="none";
+  const ctx=jsQrCanvas.getContext("2d",{willReadFrequently:true}); if(!ctx)return false;
+  const scan=(sx,sy,sw,sh)=>{
+    const max=1400,scale=Math.min(1,max/Math.max(sw,sh));
+    const w=Math.max(400,Math.floor(sw*scale)),h=Math.max(300,Math.floor(sh*scale));
+    jsQrCanvas.width=w;jsQrCanvas.height=h;ctx.drawImage(video,sx,sy,sw,sh,0,0,w,h);
+    const im=ctx.getImageData(0,0,w,h);
+    return window.jsQR(im.data,w,h,{inversionAttempts:"attemptBoth"});
+  };
   jsQrTimer=setInterval(async()=>{
-    if(jsQrBusy||scanProcessing||!video.videoWidth||!video.videoHeight)return;
+    if(jsQrBusy||scanProcessing||video.readyState<2||!video.videoWidth)return;
     jsQrBusy=true;
     try{
       const vw=video.videoWidth,vh=video.videoHeight;
-      const max=1000,scale=Math.min(1,max/Math.max(vw,vh));
-      const w=Math.max(320,Math.floor(vw*scale)),h=Math.max(240,Math.floor(vh*scale));
-      jsQrCanvas.width=w;jsQrCanvas.height=h;
-      ctx.drawImage(video,0,0,w,h);
-      const image=ctx.getImageData(0,0,w,h);
-      const code=window.jsQR(image.data,w,h,{inversionAttempts:"attemptBoth"});
-      if(code?.data){
-        await onScanSuccess(code.data);
-      }
-    }catch(err){
-      console.debug("jsQR fallback:",err);
-    }finally{jsQrBusy=false}
-  },220);
+      let code=scan(0,0,vw,vh);
+      if(!code){const side=Math.min(vw,vh)*.92;code=scan((vw-side)/2,(vh-side)/2,side,side)}
+      if(!code){const side=Math.min(vw,vh)*.70;code=scan((vw-side)/2,(vh-side)/2,side,side)}
+      if(code?.data)await onScanSuccess(code.data);
+    }catch(e){console.debug("jsQR:",e)}finally{jsQrBusy=false}
+  },180);
   return true;
 }
 
@@ -4473,66 +4471,112 @@ async function startNativeBarcodeScanner(){
     return true;
   }catch(err){stopNativeBarcodeScanner();console.warn("Native BarcodeDetector gagal:",err);return false}
 }
+async function enhanceCameraVideo(){
+  const video=$("reader")?.querySelector("video"); if(!video)return;
+  try{
+    const track=video.srcObject?.getVideoTracks?.()[0],caps=track?.getCapabilities?.()||{};
+    const adv={};
+    if(caps.width?.max)adv.width={ideal:Math.min(1920,caps.width.max)};
+    if(caps.height?.max)adv.height={ideal:Math.min(1080,caps.height.max)};
+    if(caps.focusMode?.includes?.("continuous"))adv.focusMode="continuous";
+    if(caps.zoom?.max)adv.zoom=Math.min(caps.zoom.max,Math.max(caps.zoom.min||1,1.15));
+    if(track&&Object.keys(adv).length)await track.applyConstraints({advanced:[adv]}).catch(()=>{});
+  }catch{}
+  video.setAttribute("playsinline","true");video.setAttribute("autoplay","true");video.muted=true;
+  try{await video.play()}catch{}
+}
 async function startScanner(deviceId=""){
   const nim=sessionStorage.getItem("userId");
   if(!nim||role!=="mahasiswa"){toast("Silakan login sebagai mahasiswa terlebih dahulu.","error");return}
   if(scanner||cameraBusy)return;
   const libs=await ensureQrLibraries();
-  if(!libs.scannerReady){
-    const secure=window.isSecureContext||location.hostname==="localhost"||location.hostname==="127.0.0.1";
-    if(secure){
-      cameraBusy=true;scanProcessing=false;lastScanText="";lastScanAt=0;
-      const placeholder=$("cameraPlaceholder");if(placeholder)placeholder.style.display="none";
-      $("scanResult").innerHTML="⏳ <b>Mengaktifkan pembaca QR bawaan browser...</b>";
-      const nativeOk=await startNativeBarcodeScanner();
-      cameraBusy=false;
-      if(nativeOk){$("scanResult").innerHTML="🟢 <b>Kamera aktif.</b><br/>Arahkan QR dosen ke kamera.";return}
-    }
-    $("scanResult").innerHTML="❌ <b>Mesin QR belum tersedia.</b><br/>Periksa koneksi internet atau gunakan Chrome/Edge terbaru. Anda juga dapat memakai <b>Scan dari Gambar</b>.";
-    toast("Mesin QR belum tersedia.","error");return;
-  }
-  if(!window.isSecureContext&&location.hostname!=="localhost"&&location.hostname!=="127.0.0.1"){
-    $("scanResult").innerHTML="🔐 <b>Kamera membutuhkan HTTPS.</b><br/>Buka melalui HTTPS atau localhost, bukan file://.";
-    toast("Kamera membutuhkan HTTPS.","error");return
+  const secure=window.isSecureContext||location.hostname==="localhost"||location.hostname==="127.0.0.1";
+  if(!secure){
+    $("scanResult").innerHTML="🔐 <b>Kamera membutuhkan HTTPS.</b><br/>Gunakan website GitHub Pages/HTTPS, bukan file HTML langsung.";
+    toast("Kamera membutuhkan HTTPS.","error");return;
   }
   if(!navigator.mediaDevices?.getUserMedia){
-    $("scanResult").innerHTML="❌ <b>Browser tidak mendukung akses kamera.</b><br/>Gunakan Chrome, Edge, Safari, atau Firefox versi terbaru.";
-    toast("Browser tidak mendukung kamera.","error");return
+    $("scanResult").innerHTML="❌ <b>Browser tidak mendukung kamera.</b><br/>Gunakan Chrome/Edge versi terbaru.";
+    return;
   }
   cameraBusy=true;scanProcessing=false;lastScanText="";lastScanAt=0;
   const placeholder=$("cameraPlaceholder");if(placeholder)placeholder.style.display="none";
-  $("scanResult").innerHTML="⏳ <b>Mendeteksi kamera...</b><br/>Izinkan kamera jika diminta browser.";
+  $("scanResult").innerHTML="⏳ <b>Mengaktifkan kamera dan mesin QR...</b>";
   try{
-    let cameras=cameraDevices;
-    if(!cameras?.length||deviceId)cameras=await getCameraDevices();
-    let selected=deviceId?cameras.find(c=>c.id===deviceId):chooseCamera(cameras);
-    if(!selected)throw new Error("NO_CAMERA");
-    if($("cameraSelect"))$("cameraSelect").value=selected.id;
-
-    scanner=new Html5Qrcode("reader");
+    let cameras=[];
+    if(libs.scannerReady){try{cameras=await Html5Qrcode.getCameras()}catch{}}
+    cameraDevices=cameras||cameraDevices||[];
+    let selected=deviceId?cameraDevices.find(c=>c.id===deviceId):chooseCamera(cameraDevices);
+    const constraints={
+      audio:false,
+      video:deviceId?{deviceId:{exact:deviceId},width:{ideal:1920,max:1920},height:{ideal:1080,max:1080}}:{facingMode:{ideal:cameraFacingMode},width:{ideal:1920,max:1920},height:{ideal:1080,max:1080}}
+    };
+    let stream;
+    try{stream=await navigator.mediaDevices.getUserMedia(constraints)}
+    catch(e){stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:cameraFacingMode},audio:false})}
+    const video=document.createElement("video");
+    video.id="absensiNativeVideo";video.setAttribute("playsinline","true");video.setAttribute("webkit-playsinline","true");video.autoplay=true;video.muted=true;video.srcObject=stream;
+    video.style.width="100%";video.style.height="100%";video.style.objectFit="cover";video.style.display="block";video.style.background="#000";
+    const reader=$("reader");reader.innerHTML="";reader.appendChild(video);
+    await video.play();
+    const track=stream.getVideoTracks()[0];
     try{
-      await scanner.start(selected.id,scannerConfig(),onScanSuccess,()=>{});
-    }catch(firstErr){
-      try{await scanner.clear()}catch{}
-      scanner=null;
-      scanner=new Html5Qrcode("reader");
+      const caps=track.getCapabilities?.()||{};
+      const advanced={};
+      if(caps.focusMode?.includes?.("continuous"))advanced.focusMode="continuous";
+      if(caps.exposureMode?.includes?.("continuous"))advanced.exposureMode="continuous";
+      if(caps.whiteBalanceMode?.includes?.("continuous"))advanced.whiteBalanceMode="continuous";
+      if(caps.zoom?.max)advanced.zoom=Math.min(caps.zoom.max,Math.max(caps.zoom.min||1,1.12));
+      if(Object.keys(advanced).length)await track.applyConstraints({advanced:[advanced]}).catch(()=>{});
+    }catch{}
+
+    let stopped=false, busy=false, canvas=document.createElement("canvas");
+    const ctx=canvas.getContext("2d",{willReadFrequently:true});
+    const detector=("BarcodeDetector" in window)?new BarcodeDetector({formats:["qr_code"]}):null;
+    const scanFrame=async()=>{
+      if(stopped||busy||scanProcessing||video.readyState<2||!video.videoWidth)return;
+      busy=true;
       try{
-        await scanner.start({facingMode:{ideal:cameraFacingMode}},scannerConfig(),onScanSuccess,()=>{});
-      }catch(secondErr){
-        try{await scanner.clear()}catch{}
-        scanner=null;
-        scanner=new Html5Qrcode("reader");
-        await scanner.start({facingMode:cameraFacingMode},scannerConfig(),onScanSuccess,()=>{});
-      }
-    }
-    const video=$("reader")?.querySelector("video");
-    if(video){
-      video.setAttribute("playsinline","true");
-      video.setAttribute("autoplay","true");
-      video.muted=true;
-    }
-    const fallbackStarted=startJsQrFallback();
-    $("scanResult").innerHTML=`🟢 <b>Kamera aktif.</b><br/>Arahkan QR dosen hingga seluruh kotak QR terlihat. ${fallbackStarted?"Pembaca QR cadangan aktif.":""}`;
+        let found=null;
+        if(detector){try{const a=await detector.detect(video);if(a?.length)found=a.find(x=>x.rawValue)?.rawValue||null}catch{}}
+        if(!found && libs.jsQrReady && window.jsQR){
+          const vw=video.videoWidth,vh=video.videoHeight;
+          const areas=[
+            [0,0,vw,vh],
+            [vw*.05,vh*.05,vw*.90,vh*.90],
+            [vw*.15,vh*.05,vw*.70,vh*.90],
+            [vw*.05,vh*.15,vw*.90,vh*.70],
+            [vw*.18,vh*.18,vw*.64,vh*.64]
+          ];
+          for(const [sx,sy,sw,sh] of areas){
+            const scale=Math.min(1.35,1500/Math.max(sw,sh));
+            const w=Math.max(480,Math.min(1800,Math.floor(sw*scale)));
+            const h=Math.max(360,Math.min(1400,Math.floor(sh*scale)));
+            canvas.width=w;canvas.height=h;ctx.drawImage(video,sx,sy,sw,sh,0,0,w,h);
+            const im=ctx.getImageData(0,0,w,h);
+            const c=window.jsQR(im.data,w,h,{inversionAttempts:"attemptBoth",greyScaleWeights:{red:0.299,green:0.587,blue:0.114}});
+            if(c?.data){found=c.data;break}
+          }
+        }
+        if(found){
+          stopped=true;
+          stream.getTracks().forEach(t=>t.stop());
+          scanner=null;
+          await processScannedQR(found);
+          return;
+        }
+      }catch(e){console.debug("QR frame scan",e)}finally{busy=false}
+      if(!stopped)requestAnimationFrame(scanFrame);
+    };
+    scanner={
+      __nativeReliable:true,
+      stop:async()=>{stopped=true;try{stream.getTracks().forEach(t=>t.stop())}catch{}},
+      clear:async()=>{stopped=true;try{stream.getTracks().forEach(t=>t.stop())}catch{};if(reader)reader.innerHTML=""}
+    };
+    requestAnimationFrame(scanFrame);
+    if($("cameraSelect")&&selected)$("cameraSelect").value=selected.id;
+    const label=track.label||selected?.label||"Kamera";
+    $("scanResult").innerHTML=`🟢 <b>Kamera aktif.</b><br/>${esc(label)}<br/><small>Mesin QR aktif: kamera langsung + BarcodeDetector + jsQR. Arahkan QR penuh ke layar.</small>`;
   }catch(err){
     try{if(scanner){await scanner.stop().catch(()=>{});await scanner.clear().catch(()=>{})}}catch{}
     scanner=null;if(placeholder)placeholder.style.display="flex";
@@ -4563,6 +4607,18 @@ function normalizeQRPayload(text){
   try{
     // Decoder mencoba beberapa bentuk QR agar HP berbeda/browser berbeda
     // tetap dapat membaca payload yang sama.
+    if(raw.startsWith("ABS2|")){
+      const p=raw.split("|");
+      if(p.length!==6)throw new Error("BAD_ABS_QR");
+      const token=String(p[1]||"").trim(), nip=String(p[2]||"").trim(), code=String(p[3]||"").trim();
+      const course=COURSES.find(c=>String(c.code||"").trim().toLowerCase()===code.toLowerCase());
+      const mataKuliah=course?.name||"";
+      const pertemuan=String(p[4]||"").trim();
+      let berakhir=Number(String(p[5]||"").trim());
+      if(berakhir>0&&berakhir<100000000000)berakhir*=1000;
+      if(!token||!nip||!mataKuliah||!pertemuan||!Number.isFinite(berakhir)||berakhir<=0)throw new Error("BAD_ABS_QR");
+      return {token,nip,mataKuliah,pertemuan,berakhir};
+    }
     if(raw.startsWith("ABS|")){
       const p=raw.split("|");
       if(p.length<6)throw new Error("BAD_ABS_QR");
@@ -4714,113 +4770,29 @@ function pickQRImage(){const input=$("qrImageInput");if(input){input.value="";in
 async function scanQRImage(file){
   if(!file)return;
   const libs=await ensureQrLibraries();
-  if(!libs.scannerReady){$("scanResult").innerHTML="❌ Library QR scanner belum tersedia.";return}
-  if(scanner)await stopScanner(true);
   try{
     if(!/^image\//i.test(file.type))throw new Error("NOT_IMAGE");
-    $("scanResult").innerHTML="⏳ <b>Membaca QR dari gambar...</b><br/>Pastikan QR tidak buram, tidak terpotong, dan cukup terang.";
-    const tempId="qr-image-reader-temp";let temp=$(tempId);
-    if(!temp){temp=document.createElement("div");temp.id=tempId;temp.style.display="none";document.body.appendChild(temp)}
-    const reader=new Html5Qrcode(tempId);
-    try{
-      const text=await reader.scanFile(file,true);
-      await processScannedQR(text);
-    }finally{
-      try{await reader.clear()}catch{}
+    $("scanResult").innerHTML="⏳ <b>Membaca QR dari gambar...</b>";
+    if(libs.scannerReady){
+      const tempId="qr-image-reader-temp";let temp=$(tempId);
+      if(!temp){temp=document.createElement("div");temp.id=tempId;temp.style.display="none";document.body.appendChild(temp)}
+      const reader=new Html5Qrcode(tempId);
+      try{const text=await reader.scanFile(file,true);await processScannedQR(text);return}finally{try{await reader.clear()}catch{}}
     }
+    if(libs.jsQrReady&&window.jsQR){
+      const img=await new Promise((resolve,reject)=>{const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{URL.revokeObjectURL(u);resolve(i)};i.onerror=reject;i.src=u});
+      const c=document.createElement("canvas"),ctx=c.getContext("2d",{willReadFrequently:true});
+      const max=1800,scale=Math.min(1,max/Math.max(img.width,img.height));c.width=Math.max(1,Math.floor(img.width*scale));c.height=Math.max(1,Math.floor(img.height*scale));ctx.drawImage(img,0,0,c.width,c.height);
+      const im=ctx.getImageData(0,0,c.width,c.height),code=window.jsQR(im.data,c.width,c.height,{inversionAttempts:"attemptBoth"});
+      if(code?.data){await processScannedQR(code.data);return}
+    }
+    throw new Error("QR_NOT_FOUND");
   }catch(err){
-    const msg=err?.message==="NOT_IMAGE"?"File yang dipilih bukan gambar.":"QR tidak ditemukan pada gambar. Gunakan foto QR yang tajam dan tidak terpotong.";
-    $("scanResult").innerHTML=`❌ <b>${esc(msg)}</b>`;toast(msg,"error")
+    const msg=err?.message==="NOT_IMAGE"?"File bukan gambar.":err?.message==="QR_NOT_FOUND"?"QR tidak ditemukan pada gambar. Gunakan gambar QR yang tajam dan tidak terpotong.":String(err?.message||"Gagal membaca QR");
+    $("scanResult").innerHTML=`❌ <b>${esc(msg)}</b>`;toast(msg,"error","Scan Gagal");
   }
 }
 
-function exportStudentCSV(){
-  const nim=sessionStorage.getItem("userId"),d=getData().filter(x=>x.nim===nim);
-  downloadCSV([["No","NIM","Nama","Mata Kuliah","Pertemuan","Waktu","Dosen","Status"],...d.map((x,i)=>[i+1,x.nim,x.nama,x.mataKuliah,x.pertemuan,x.waktu,x.dosen||"-",x.status||"Hadir"])] ,"Rekap_Absensi_Mahasiswa.csv");
-}
-
-/* =========================================================
-   DIAGNOSTIK KONEKSI CLOUD
-   ========================================================= */
-async function testSupabaseConnection(show=true){
-  const configured=isSupabaseConfigured();
-  if(!configured){
-    if(show)toast("Supabase belum dikonfigurasi. Klik tombol cloud lalu masukkan URL + Anon/Publishable Key.","warning","Database Offline");
-    return {ok:false,reason:"not-configured"};
-  }
-  try{
-    const initialized=await initSupabaseClient();
-    if(!initialized)throw new Error("Library Supabase gagal dimuat.");
-    const {data,error}=await supabaseClient.from("attendance").select("id",{count:"exact",head:true});
-    if(error)throw error;
-    cloudReady=true;
-    cloudLastError="";
-    updateCloudBadge();
-    subscribeAttendanceRealtime();
-    startCloudPolling();
-    await syncExistingAttendanceToCloud();
-    if(show)toast("Database Supabase tersambung. Sinkronisasi online + cadangan polling aktif.","success","Online");
-    return {ok:true,data};
-  }catch(err){
-    cloudReady=false;
-    cloudLastError=String(err?.message||err||"unknown");
-    updateCloudBadge();
-    scheduleCloudReconnect();
-    console.error("Tes Supabase gagal:",err);
-    if(show)toast("Database belum siap. Pastikan tabel attendance, RLS, dan Realtime sudah diatur.","error","Database Belum Siap");
-    return {ok:false,reason:"database",error:err};
-  }
-}
-function configureSupabaseFromPrompt(){
-  const current=activeSupabaseConfig();
-  const url=prompt("Masukkan SUPABASE_URL (contoh: https://xxxxx.supabase.co)",current.url||"");
-  if(url===null)return;
-  const key=prompt("Masukkan Supabase Anon/Publishable Key (BUKAN service_role)",current.key||"");
-  if(key===null)return;
-  if(!/^https?:\/\//i.test(url.trim())||!key.trim()){toast("URL atau key tidak valid.","error");return}
-  saveSupabaseConfig(url,key);
-  testSupabaseConnection(true);
-}
-/* =========================================================
-   DOSEN + QR
-   ========================================================= */
-function initLecturer(){
-  fillLecturerOptions();fillCourseOptions();fillMeetingOptions();fillAssignmentCourseOptions();
-  renderLecturerCourseCards();renderLecturerTable();renderLecturerAssignments();updateLecturerStats();renderAnalytics();buildLecturerNotifications();renderLiveMonitor();renderMeetingSummary();renderPermitRequests();renderReportSummary();
-}
-function fillLecturerOptions(){
-  const nip=activeLecturerNip(),name=LECTURER_ACCOUNTS[nip]||"Dosen";
-  $("lecturerSelect").innerHTML=`<option value="${esc(name)}">${esc(name)} (${esc(nip||"-")})</option>`;
-  $("filterLecturer").innerHTML=`<option value="${esc(name)}">${esc(name)} • NIP ${esc(nip||"-")}</option>`;
-  $("lecturerSelect").value=name;
-  $("filterLecturer").value=name;
-  syncLecturerName();
-}
-function fillCourseOptions(){
-  const allowed=lecturerCourses();
-  const courses=COURSES.filter(c=>allowed.includes(c.name));
-  const opts=courses.map(c=>`<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
-  $("qrCourse").innerHTML=opts||'<option value="">Belum ada mata kuliah</option>';
-  $("filterCourse").innerHTML='<option value="">Semua Mata Kuliah Saya</option>'+opts;
-  if(!opts) $("qrCourse").disabled=true; else $("qrCourse").disabled=false;
-}
-function fillMeetingOptions(){
-  let opts="";for(let i=1;i<=16;i++)opts+=`<option value="${i}">Pertemuan ${i}</option>`;
-  $("qrMeeting").innerHTML=opts;$("filterMeeting").innerHTML='<option value="">Semua Pertemuan</option>'+opts;
-}
-function syncLecturerName(){
-  const nip=activeLecturerNip();
-  const name=lecturerNameForNip(nip)||"Dosen";
-  $("namaDosen").value=name;
-  $("lecturerSelect").value=name;
-  if($("lecturerNip"))$("lecturerNip").value=nip||"";
-}
-function syncSelectedCourseLecturer(course){
-  const info=lecturerForCourse(course);
-  if($("namaDosen")&&info.name)$("namaDosen").value=info.name;
-  if($("lecturerNip")&&info.nip)$("lecturerNip").value=info.nip;
-  return info;
-}
 async function generateQR(){
   const libs=await ensureQrLibraries();
   if(!libs.generatorReady){toast("Library pembuat QR gagal dimuat. Periksa koneksi internet.","error");return}
@@ -4846,8 +4818,9 @@ async function generateQR(){
     }
   }
   $("qrTitle").textContent=`${info.course} • Pertemuan ${p}`;$("qrToken").textContent=token;
-  $("qrcode").innerHTML="";const qrText=["ABS",token,info.nip,info.course,String(p),String(end)].join("|");
-  new QRCode($("qrcode"),{text:qrText,width:320,height:320,colorDark:"#0f172a",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.M});
+  $("qrcode").innerHTML="";const courseCode=String((courseByName(info.course)||{}).code||"").trim();
+  const qrText=["ABS2",token,info.nip,courseCode,String(p),String(end)].join("|");
+  new QRCode($("qrcode"),{text:qrText,width:460,height:460,colorDark:"#000000",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.H});
   clearInterval(qrTimer);qrTimer=setInterval(updateQRTimer,1000);updateQRTimer();updateLecturerStats();renderLiveMonitor();toast("QR absensi berhasil dibuat.");
 }
 function updateQRTimer(){
