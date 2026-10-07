@@ -5219,26 +5219,56 @@ setInterval(()=>{
 },5000);
 
 window.addEventListener("load",()=>{
-  // Setiap kali halaman dibuka/reload, login website wajib diisi ulang.
-  sessionStorage.removeItem("userRole");
-  sessionStorage.removeItem("userId");
-  sessionStorage.removeItem("namaDosenAktif");
+  /*
+   * Login website TETAP aktif saat refresh/reload.
+   * sessionStorage sengaja dipakai agar sesi tidak disimpan permanen.
+   * Saat tab/browser benar-benar ditutup, browser biasanya menghapus
+   * sessionStorage sehingga saat website dibuka kembali pengguna login lagi.
+   */
   applyTheme(localStorage.getItem("absensiTheme")||"light");
-  $("loginScreen").style.display="flex";
-  $("app").style.display="none";
-  $("accountStep").classList.remove("hidden");
-  $("roleStep").classList.add("hidden");
-  $("idStep").classList.add("hidden");
-  $("username").value="";
-  $("password").value="";
-  $("username").focus();
+
+  const savedRole=sessionStorage.getItem("userRole");
+  const savedId=sessionStorage.getItem("userId");
+  const validSavedLogin=(savedRole==="mahasiswa" && /^\d{9}$/.test(String(savedId||""))) ||
+                        (savedRole==="dosen" && !!LECTURER_ACCOUNTS[String(savedId||"")]);
+
+  if(validSavedLogin){
+    role=savedRole;
+    $("loginScreen").style.display="none";
+    $("app").style.display="block";
+    try{
+      const cloudJob=hydrateAttendanceFromCloud(true);
+      Promise.race([cloudJob,new Promise(resolve=>setTimeout(resolve,4500))])
+        .catch(error=>console.warn("Cloud restore skipped:",error))
+        .finally(()=>{
+          initApp();
+          if(cloudReady) syncExistingAttendanceToCloud().catch(()=>{});
+        });
+    }catch(error){
+      console.warn("Session restore skipped:",error);
+      initApp();
+    }
+  }else{
+    sessionStorage.removeItem("userRole");
+    sessionStorage.removeItem("userId");
+    sessionStorage.removeItem("namaDosenAktif");
+    $("loginScreen").style.display="flex";
+    $("app").style.display="none";
+    $("accountStep").classList.remove("hidden");
+    $("roleStep").classList.add("hidden");
+    $("idStep").classList.add("hidden");
+    $("username").value="";
+    $("password").value="";
+    $("username").focus();
+  }
 });
 
 /*
- * Jangan menghapus sessionStorage pada pagehide. Di Android/iOS, pagehide
- * dapat terpanggil saat pengguna hanya berpindah aplikasi/tab sehingga
- * dashboard tiba-tiba logout dan semua tombol terasa seperti tidak bekerja.
- * Login ulang tetap dipaksa pada pembukaan/reload halaman melalui handler load.
+ * JANGAN menghapus sessionStorage pada refresh/pagehide.
+ * Refresh mempertahankan sesi. Tombol "Keluar" tetap memanggil logout()
+ * dan menghapus sessionStorage sehingga login wajib dilakukan lagi.
+ * Jika tab/browser benar-benar ditutup, sessionStorage akan berakhir secara
+ * normal dan pengguna harus login kembali saat membuka website.
  */
 $("roleId").addEventListener("keydown",e=>{if(e.key==="Enter")loginRole()});
 
