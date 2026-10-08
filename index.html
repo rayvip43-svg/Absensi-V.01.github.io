@@ -1958,6 +1958,111 @@ button,input,select,textarea{max-width:100%}
 }
 </style>
 
+
+<style id="qrGeneratorFix">
+/* ===== PERBAIKAN GENERATOR QR ABSENSI ===== */
+#lecturerQR .card{
+  padding:20px;
+}
+#lecturerQR .qr-layout{
+  display:grid;
+  grid-template-columns:minmax(300px,520px) minmax(360px,1fr);
+  gap:20px;
+  align-items:start;
+}
+#lecturerQR .qr-layout > div:first-child{
+  min-width:0;
+}
+#lecturerQR .form-group{
+  margin-bottom:13px;
+}
+#lecturerQR .form-group label{
+  font-size:13px;
+  margin-bottom:6px;
+}
+#lecturerQR input,
+#lecturerQR select{
+  width:100%;
+  height:46px;
+  min-height:46px;
+  padding:10px 13px;
+  border-radius:12px;
+  font-size:14px;
+}
+#lecturerQR input[readonly]{
+  background:#f1f5f9!important;
+  color:#475569!important;
+}
+#lecturerQR .qr-preview{
+  min-width:0;
+  padding:18px;
+}
+#lecturerQR #qrcode{
+  min-height:260px;
+  max-width:100%;
+  overflow:hidden;
+}
+#lecturerQR #qrcode canvas,
+#lecturerQR #qrcode img{
+  width:min(100%,360px)!important;
+  height:auto!important;
+  margin:auto;
+}
+#lecturerQR .qr-generator-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:5px;
+}
+#lecturerQR .qr-generator-actions .btn{
+  min-height:42px;
+  padding:10px 14px;
+}
+#lecturerQR .qr-required-note{
+  margin:0 0 14px;
+  padding:10px 12px;
+  border-radius:12px;
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  color:#1e3a8a;
+  font-size:11px;
+  line-height:1.5;
+}
+body.dark-mode #lecturerQR input[readonly]{
+  background:#1e293b!important;
+  color:#cbd5e1!important;
+}
+body.dark-mode #lecturerQR .qr-required-note{
+  background:#172554;
+  border-color:#3730a3;
+  color:#bfdbfe;
+}
+@media(max-width:1050px){
+  #lecturerQR .qr-layout{
+    grid-template-columns:minmax(280px,560px) 1fr;
+  }
+}
+@media(max-width:780px){
+  #lecturerQR .qr-layout{
+    grid-template-columns:1fr;
+  }
+  #lecturerQR .qr-preview{
+    width:100%;
+  }
+}
+@media(max-width:520px){
+  #lecturerQR .card{
+    padding:14px;
+  }
+  #lecturerQR input,
+  #lecturerQR select{
+    height:44px;
+    min-height:44px;
+    font-size:13px;
+  }
+}
+</style>
+
 </head>
  <body>
 <div id="cloudConnectionBadge" style="position:fixed;right:14px;bottom:14px;z-index:9998;padding:8px 12px;border-radius:999px;background:#111827;color:#fff;font:600 12px Arial,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.18);cursor:pointer" title="Klik untuk tes koneksi Supabase" onclick="handleCloudBadgeClick()">☁️ Offline / Lokal</div>
@@ -2767,6 +2872,7 @@ button,input,select,textarea{max-width:100%}
          </span>
         </div>
        </div>
+       <div class="qr-required-note">🔒 <b>QR hanya dapat dibuat untuk mata kuliah milik dosen yang sedang login.</b> Pilih mata kuliah dan pertemuan terlebih dahulu.</div>
        <div class="qr-layout">
         <div>
          <div class="form-group">
@@ -4324,6 +4430,7 @@ function cameraErrorMessage(err){
   if(/NotReadable|TrackStart|Could not start/i.test(name))return "⚠️ <b>Kamera sedang dipakai aplikasi lain.</b><br/>Tutup Camera, Zoom, Meet, Teams, atau aplikasi lain yang memakai kamera.";
   if(/Overconstrained/i.test(name))return "⚠️ Kamera yang dipilih tidak tersedia. Pilih kamera lain.";
   if(/SecurityError|secure context/i.test(name))return "🔐 <b>Kamera membutuhkan HTTPS.</b><br/>Gunakan HTTPS atau localhost, bukan file://.";
+  if(/CAMERA_NOT_READY/i.test(name))return "⚠️ <b>Kamera belum siap.</b><br/>Tunggu sebentar lalu tekan Mulai Kamera lagi.";
   return "❌ <b>Kamera gagal dibuka.</b><br/>Periksa izin kamera, koneksi, dan coba kamera lain.";
 }
 function classifyCamera(label=""){
@@ -4507,9 +4614,14 @@ async function startScanner(deviceId=""){
     if(libs.scannerReady){try{cameras=await Html5Qrcode.getCameras()}catch{}}
     cameraDevices=cameras||cameraDevices||[];
     let selected=deviceId?cameraDevices.find(c=>c.id===deviceId):chooseCamera(cameraDevices);
+    // Jangan memakai max:1920/max:1080 karena beberapa HP/browser (termasuk
+    // perangkat Android tertentu) dapat menolak constraint tersebut.
+    // Gunakan ideal agar browser memilih resolusi terbaik yang tersedia.
     const constraints={
       audio:false,
-      video:deviceId?{deviceId:{exact:deviceId},width:{ideal:1920,max:1920},height:{ideal:1080,max:1080}}:{facingMode:{ideal:cameraFacingMode},width:{ideal:1920,max:1920},height:{ideal:1080,max:1080}}
+      video:deviceId
+        ? {deviceId:{exact:deviceId},width:{ideal:1280},height:{ideal:720}}
+        : {facingMode:{ideal:cameraFacingMode},width:{ideal:1280},height:{ideal:720}}
     };
     let stream;
     try{stream=await navigator.mediaDevices.getUserMedia(constraints)}
@@ -4518,7 +4630,21 @@ async function startScanner(deviceId=""){
     video.id="absensiNativeVideo";video.setAttribute("playsinline","true");video.setAttribute("webkit-playsinline","true");video.autoplay=true;video.muted=true;video.srcObject=stream;
     video.style.width="100%";video.style.height="100%";video.style.objectFit="cover";video.style.display="block";video.style.background="#000";
     const reader=$("reader");reader.innerHTML="";reader.appendChild(video);
-    await video.play();
+
+    // Tunggu metadata kamera benar-benar siap sebelum memulai scanner.
+    // Ini mencegah bug: kamera sudah tampil tetapi loop scan tidak pernah mulai.
+    await new Promise((resolve,reject)=>{
+      let done=false;
+      const finish=()=>{if(done)return;done=true;clearTimeout(timer);resolve()};
+      const timer=setTimeout(finish,5000);
+      video.addEventListener("loadedmetadata",finish,{once:true});
+      video.addEventListener("canplay",finish,{once:true});
+    });
+    await video.play().catch(()=>{});
+    if(!video.videoWidth||!video.videoHeight){
+      await new Promise(r=>setTimeout(r,300));
+    }
+    if(!video.videoWidth||!video.videoHeight)throw new Error("CAMERA_NOT_READY");
     const track=stream.getVideoTracks()[0];
     try{
       const caps=track.getCapabilities?.()||{};
@@ -4530,15 +4656,39 @@ async function startScanner(deviceId=""){
       if(Object.keys(advanced).length)await track.applyConstraints({advanced:[advanced]}).catch(()=>{});
     }catch{}
 
-    let stopped=false, busy=false, canvas=document.createElement("canvas");
+    let stopped=false, busy=false, scanTimer=null, canvas=document.createElement("canvas");
     const ctx=canvas.getContext("2d",{willReadFrequently:true});
-    const detector=("BarcodeDetector" in window)?new BarcodeDetector({formats:["qr_code"]}):null;
+    let detector=null;
+    try{
+      if("BarcodeDetector" in window){
+        const supported=typeof BarcodeDetector.getSupportedFormats==="function"
+          ? await BarcodeDetector.getSupportedFormats().catch(()=>[])
+          : ["qr_code"];
+        if(supported.includes("qr_code"))detector=new BarcodeDetector({formats:["qr_code"]});
+      }
+    }catch{detector=null}
+
+    const scheduleNextScan=()=>{
+      if(stopped)return;
+      clearTimeout(scanTimer);
+      scanTimer=setTimeout(scanFrame,100);
+    };
+
     const scanFrame=async()=>{
-      if(stopped||busy||scanProcessing||video.readyState<2||!video.videoWidth)return;
+      // PENTING: jangan return permanen saat video belum siap.
+      // Coba lagi sampai metadata/frame kamera tersedia.
+      if(stopped)return;
+      if(busy||scanProcessing){scheduleNextScan();return}
+      if(video.readyState<2||!video.videoWidth||!video.videoHeight){scheduleNextScan();return}
       busy=true;
       try{
         let found=null;
-        if(detector){try{const a=await detector.detect(video);if(a?.length)found=a.find(x=>x.rawValue)?.rawValue||null}catch{}}
+        if(detector){
+          try{
+            const a=await detector.detect(video);
+            if(a?.length)found=a.find(x=>x.rawValue)?.rawValue||null;
+          }catch(e){console.debug("BarcodeDetector:",e)}
+        }
         if(!found && libs.jsQrReady && window.jsQR){
           const vw=video.videoWidth,vh=video.videoHeight;
           const areas=[
@@ -4549,31 +4699,37 @@ async function startScanner(deviceId=""){
             [vw*.18,vh*.18,vw*.64,vh*.64]
           ];
           for(const [sx,sy,sw,sh] of areas){
-            const scale=Math.min(1.35,1500/Math.max(sw,sh));
+            const scale=Math.min(1.5,1600/Math.max(sw,sh));
             const w=Math.max(480,Math.min(1800,Math.floor(sw*scale)));
             const h=Math.max(360,Math.min(1400,Math.floor(sh*scale)));
-            canvas.width=w;canvas.height=h;ctx.drawImage(video,sx,sy,sw,sh,0,0,w,h);
+            canvas.width=w;canvas.height=h;
+            ctx.drawImage(video,sx,sy,sw,sh,0,0,w,h);
             const im=ctx.getImageData(0,0,w,h);
-            const c=window.jsQR(im.data,w,h,{inversionAttempts:"attemptBoth",greyScaleWeights:{red:0.299,green:0.587,blue:0.114}});
+            const c=window.jsQR(im.data,w,h,{
+              inversionAttempts:"attemptBoth",
+              greyScaleWeights:{red:0.299,green:0.587,blue:0.114}
+            });
             if(c?.data){found=c.data;break}
           }
         }
         if(found){
           stopped=true;
-          stream.getTracks().forEach(t=>t.stop());
+          clearTimeout(scanTimer);
+          try{stream.getTracks().forEach(t=>t.stop())}catch{}
           scanner=null;
           await processScannedQR(found);
           return;
         }
-      }catch(e){console.debug("QR frame scan",e)}finally{busy=false}
-      if(!stopped)requestAnimationFrame(scanFrame);
+      }catch(e){console.debug("QR frame scan",e)}
+      finally{busy=false}
+      scheduleNextScan();
     };
     scanner={
       __nativeReliable:true,
-      stop:async()=>{stopped=true;try{stream.getTracks().forEach(t=>t.stop())}catch{}},
-      clear:async()=>{stopped=true;try{stream.getTracks().forEach(t=>t.stop())}catch{};if(reader)reader.innerHTML=""}
+      stop:async()=>{stopped=true;clearTimeout(scanTimer);try{stream.getTracks().forEach(t=>t.stop())}catch{}},
+      clear:async()=>{stopped=true;clearTimeout(scanTimer);try{stream.getTracks().forEach(t=>t.stop())}catch{};if(reader)reader.innerHTML=""}
     };
-    requestAnimationFrame(scanFrame);
+    scheduleNextScan();
     if($("cameraSelect")&&selected)$("cameraSelect").value=selected.id;
     const label=track.label||selected?.label||"Kamera";
     $("scanResult").innerHTML=`🟢 <b>Kamera aktif.</b><br/>${esc(label)}<br/><small>Mesin QR aktif: kamera langsung + BarcodeDetector + jsQR. Arahkan QR penuh ke layar.</small>`;
@@ -5083,6 +5239,7 @@ function printStudentCard(){
 
 
 
+
 </body></html>`);
   w.document.close();w.focus();setTimeout(()=>w.print(),300);
 }
@@ -5322,6 +5479,81 @@ $("password").addEventListener("keydown",e=>{if(e.key==="Enter")loginWebsite()})
   style.textContent='.premium-ripple{position:absolute;width:12px;height:12px;border-radius:50%;pointer-events:none;transform:translate(-50%,-50%) scale(0);background:rgba(255,255,255,.28);box-shadow:0 0 24px rgba(255,255,255,.18);animation:premiumRipple .55s cubic-bezier(.22,1,.36,1) forwards;z-index:8}@keyframes premiumRipple{0%{transform:translate(-50%,-50%) scale(0);opacity:.8}100%{transform:translate(-50%,-50%) scale(15);opacity:0}}';
   document.head.appendChild(style);
 })();
+</script>
+<script id="qrGeneratorFixJS">
+/* =========================================================
+   FIX GENERATOR QR ABSENSI
+   ========================================================= */
+function syncSelectedCourseLecturer(course){
+  const info=lecturerForCourse(course);
+  const nip=activeLecturerNip();
+  if(!nip || String(info.nip)!==String(nip)){
+    return {nip:"",name:"",course:"",code:""};
+  }
+  const lecturerEl=$("lecturerSelect");
+  const nameEl=$("namaDosen");
+  if(nameEl) nameEl.value=info.name||"";
+  if(lecturerEl && info.nip) lecturerEl.value=String(info.nip);
+  return info;
+}
+function syncLecturerName(){
+  const nip=String($("lecturerSelect")?.value||"").trim();
+  const active=String(activeLecturerNip()||"").trim();
+  if(!nip || nip!==active){
+    if($("namaDosen")) $("namaDosen").value="";
+    if($("qrCourse")) $("qrCourse").innerHTML='<option value="">Pilih mata kuliah</option>';
+    if($("qrMeeting")) $("qrMeeting").innerHTML='<option value="">Pilih pertemuan</option>';
+    return;
+  }
+  const name=lecturerNameForNip(nip);
+  if($("namaDosen")) $("namaDosen").value=name;
+  const courses=lecturerCourses(nip);
+  const courseSelect=$("qrCourse");
+  if(courseSelect){
+    const current=courseSelect.value;
+    courseSelect.innerHTML='<option value="">Pilih mata kuliah</option>'+courses.map(c=>{
+      const info=lecturerForCourse(c);
+      return `<option value="${esc(info.course)}">${esc(info.course)} • ${esc(info.code)}</option>`;
+    }).join("");
+    if(courses.includes(current)) courseSelect.value=current;
+    else if(courses.length===1) courseSelect.value=courses[0];
+  }
+  syncMeetingOptions();
+  if($("qrCourse")?.value) syncSelectedCourseLecturer($("qrCourse").value);
+}
+function syncMeetingOptions(){
+  const select=$("qrMeeting");
+  if(!select)return;
+  const current=String(select.value||"");
+  select.innerHTML='<option value="">Pilih pertemuan</option>'+Array.from({length:16},(_,i)=>{
+    const n=i+1;
+    return `<option value="${n}">Pertemuan ${n}</option>`;
+  }).join("");
+  if(current && Number(current)>=1 && Number(current)<=16)select.value=current;
+  else select.value="1";
+}
+function initLecturerQRGenerator(){
+  const lecturer=$("lecturerSelect"),course=$("qrCourse"),meeting=$("qrMeeting"),duration=$("qrDuration");
+  if(!lecturer||!course||!meeting||!duration)return;
+  const nip=String(activeLecturerNip()||"").trim(),name=lecturerNameForNip(nip);
+  lecturer.innerHTML="";
+  if(nip&&name){
+    const opt=document.createElement("option");
+    opt.value=nip;opt.textContent=`${name} • NIP ${nip}`;lecturer.appendChild(opt);lecturer.value=nip;
+  }else lecturer.innerHTML='<option value="">Dosen tidak ditemukan</option>';
+  syncLecturerName();
+  course.onchange=()=>{const value=String(course.value||"").trim();if(value)syncSelectedCourseLecturer(value);};
+}
+function initLecturer(){
+  try{
+    initLecturerQRGenerator();
+    renderLecturerTable();updateLecturerStats();renderAnalytics();renderLecturerExamEligibility();
+    renderLiveMonitor();renderMeetingSummary();renderPermitRequests();renderReportSummary();buildLecturerNotifications();renderLecturerCourseCards();
+  }catch(err){
+    console.error("initLecturer error:",err);
+    try{initLecturerQRGenerator()}catch(e){console.error("QR init error:",e)}
+  }
+}
 </script>
 </body>
 </html>
