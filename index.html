@@ -5482,78 +5482,129 @@ $("password").addEventListener("keydown",e=>{if(e.key==="Enter")loginWebsite()})
 </script>
 <script id="qrGeneratorFixJS">
 /* =========================================================
-   FIX GENERATOR QR ABSENSI
+   GENERATOR QR ABSENSI — FIX FINAL
+   Selalu mengisi data berdasarkan akun dosen yang aktif.
    ========================================================= */
+function getActiveLecturerNipSafe(){
+  const fromSession=String(sessionStorage.getItem("userId")||"").trim();
+  const fromRole=String(role||sessionStorage.getItem("userRole")||"").trim();
+  if(fromRole==="dosen" && LECTURER_ACCOUNTS[fromSession]) return fromSession;
+  return fromSession && LECTURER_ACCOUNTS[fromSession] ? fromSession : "";
+}
+
 function syncSelectedCourseLecturer(course){
   const info=lecturerForCourse(course);
-  const nip=activeLecturerNip();
-  if(!nip || String(info.nip)!==String(nip)){
+  const active=getActiveLecturerNipSafe();
+  const nameEl=$("namaDosen");
+  const lecturerEl=$("lecturerSelect");
+  if(!info.nip || !active || String(info.nip)!==String(active)){
+    if(nameEl) nameEl.value=active ? (LECTURER_ACCOUNTS[active]||"") : "";
     return {nip:"",name:"",course:"",code:""};
   }
-  const lecturerEl=$("lecturerSelect");
-  const nameEl=$("namaDosen");
-  if(nameEl) nameEl.value=info.name||"";
-  if(lecturerEl && info.nip) lecturerEl.value=String(info.nip);
+  if(nameEl) nameEl.value=info.name||LECTURER_ACCOUNTS[active]||"";
+  if(lecturerEl) lecturerEl.value=String(active);
   return info;
 }
-function syncLecturerName(){
-  const nip=String($("lecturerSelect")?.value||"").trim();
-  const active=String(activeLecturerNip()||"").trim();
-  if(!nip || nip!==active){
-    if($("namaDosen")) $("namaDosen").value="";
-    if($("qrCourse")) $("qrCourse").innerHTML='<option value="">Pilih mata kuliah</option>';
-    if($("qrMeeting")) $("qrMeeting").innerHTML='<option value="">Pilih pertemuan</option>';
-    return;
-  }
-  const name=lecturerNameForNip(nip);
-  if($("namaDosen")) $("namaDosen").value=name;
-  const courses=lecturerCourses(nip);
-  const courseSelect=$("qrCourse");
-  if(courseSelect){
-    const current=courseSelect.value;
-    courseSelect.innerHTML='<option value="">Pilih mata kuliah</option>'+courses.map(c=>{
-      const info=lecturerForCourse(c);
-      return `<option value="${esc(info.course)}">${esc(info.course)} • ${esc(info.code)}</option>`;
-    }).join("");
-    if(courses.includes(current)) courseSelect.value=current;
-    else if(courses.length===1) courseSelect.value=courses[0];
-  }
-  syncMeetingOptions();
-  if($("qrCourse")?.value) syncSelectedCourseLecturer($("qrCourse").value);
-}
-function syncMeetingOptions(){
+
+function fillQRMeetingOptions(){
   const select=$("qrMeeting");
   if(!select)return;
-  const current=String(select.value||"");
-  select.innerHTML='<option value="">Pilih pertemuan</option>'+Array.from({length:16},(_,i)=>{
-    const n=i+1;
-    return `<option value="${n}">Pertemuan ${n}</option>`;
-  }).join("");
-  if(current && Number(current)>=1 && Number(current)<=16)select.value=current;
-  else select.value="1";
+  const old=String(select.value||"");
+  select.innerHTML='<option value="">Pilih pertemuan</option>'+
+    Array.from({length:16},(_,i)=>`<option value="${i+1}">Pertemuan ${i+1}</option>`).join("");
+  if(old && Number(old)>=1 && Number(old)<=16) select.value=old;
 }
-function initLecturerQRGenerator(){
-  const lecturer=$("lecturerSelect"),course=$("qrCourse"),meeting=$("qrMeeting"),duration=$("qrDuration");
-  if(!lecturer||!course||!meeting||!duration)return;
-  const nip=String(activeLecturerNip()||"").trim(),name=lecturerNameForNip(nip);
-  lecturer.innerHTML="";
-  if(nip&&name){
-    const opt=document.createElement("option");
-    opt.value=nip;opt.textContent=`${name} • NIP ${nip}`;lecturer.appendChild(opt);lecturer.value=nip;
-  }else lecturer.innerHTML='<option value="">Dosen tidak ditemukan</option>';
-  syncLecturerName();
-  course.onchange=()=>{const value=String(course.value||"").trim();if(value)syncSelectedCourseLecturer(value);};
-}
-function initLecturer(){
-  try{
-    initLecturerQRGenerator();
-    renderLecturerTable();updateLecturerStats();renderAnalytics();renderLecturerExamEligibility();
-    renderLiveMonitor();renderMeetingSummary();renderPermitRequests();renderReportSummary();buildLecturerNotifications();renderLecturerCourseCards();
-  }catch(err){
-    console.error("initLecturer error:",err);
-    try{initLecturerQRGenerator()}catch(e){console.error("QR init error:",e)}
+
+function syncLecturerName(){
+  const lecturerEl=$("lecturerSelect");
+  const courseEl=$("qrCourse");
+  const nameEl=$("namaDosen");
+  const active=getActiveLecturerNipSafe();
+  const selected=String(lecturerEl?.value||active||"").trim();
+
+  if(!selected || !LECTURER_ACCOUNTS[selected]){
+    if(nameEl) nameEl.value="";
+    if(courseEl) courseEl.innerHTML='<option value="">Pilih mata kuliah</option>';
+    fillQRMeetingOptions();
+    return;
   }
+
+  // Jangan izinkan akun dosen membuat QR atas nama dosen lain.
+  const nip=active && LECTURER_ACCOUNTS[active] ? active : selected;
+  if(lecturerEl) lecturerEl.value=nip;
+  if(nameEl) nameEl.value=LECTURER_ACCOUNTS[nip]||"";
+
+  const courses=(LECTURER_COURSES[String(nip)]||[]).slice();
+  if(courseEl){
+    const old=String(courseEl.value||"");
+    courseEl.innerHTML='<option value="">Pilih mata kuliah</option>'+
+      courses.map(course=>{
+        const info=lecturerForCourse(course);
+        return `<option value="${esc(info.course)}">${esc(info.course)} • ${esc(info.code)}</option>`;
+      }).join("");
+    if(old && courses.includes(old)) courseEl.value=old;
+    else if(courses.length===1) courseEl.value=courses[0];
+  }
+  fillQRMeetingOptions();
+  if(courseEl?.value) syncSelectedCourseLecturer(courseEl.value);
 }
+
+function initLecturerQRGenerator(){
+  const lecturer=$("lecturerSelect"), course=$("qrCourse"), meeting=$("qrMeeting"), duration=$("qrDuration");
+  if(!lecturer || !course || !meeting || !duration) return false;
+
+  const active=getActiveLecturerNipSafe();
+
+  // Jika NIP aktif valid, tampilkan akun tersebut. Jika tidak, tampilkan semua
+  // akun dosen agar dropdown tidak pernah kosong.
+  const entries=Object.entries(LECTURER_ACCOUNTS);
+  lecturer.innerHTML=entries.map(([nip,name])=>
+    `<option value="${esc(nip)}">${esc(name)} • NIP ${esc(nip)}</option>`
+  ).join("");
+  if(active && LECTURER_ACCOUNTS[active]) lecturer.value=active;
+  else if(entries.length) lecturer.value=entries[0][0];
+
+  syncLecturerName();
+
+  lecturer.onchange=()=>{
+    const current=getActiveLecturerNipSafe();
+    // Dosen aktif tidak boleh berpindah ke akun lain.
+    if(current && lecturer.value!==current){
+      lecturer.value=current;
+      toast("Dosen Pengajar mengikuti akun dosen yang sedang login.","warning","Akun Dosen");
+    }
+    syncLecturerName();
+  };
+  course.onchange=()=>syncSelectedCourseLecturer(course.value);
+  meeting.onchange=()=>{};
+  duration.onchange=()=>{};
+  return true;
+}
+
+function initLecturer(){
+  // QR harus diinisialisasi lebih dulu agar dropdown selalu terisi.
+  try{initLecturerQRGenerator()}catch(err){console.error("QR generator init:",err)}
+  try{renderLecturerTable()}catch(err){console.warn("renderLecturerTable:",err)}
+  try{updateLecturerStats()}catch(err){console.warn("updateLecturerStats:",err)}
+  try{renderAnalytics()}catch(err){console.warn("renderAnalytics:",err)}
+  try{renderLecturerExamEligibility()}catch(err){console.warn("renderLecturerExamEligibility:",err)}
+  try{renderLiveMonitor()}catch(err){console.warn("renderLiveMonitor:",err)}
+  try{renderMeetingSummary()}catch(err){console.warn("renderMeetingSummary:",err)}
+  try{renderPermitRequests()}catch(err){console.warn("renderPermitRequests:",err)}
+  try{renderReportSummary()}catch(err){console.warn("renderReportSummary:",err)}
+  try{buildLecturerNotifications()}catch(err){console.warn("buildLecturerNotifications:",err)}
+  try{renderLecturerCourseCards()}catch(err){console.warn("renderLecturerCourseCards:",err)}
+}
+
+// Pastikan ketika menu "Buat QR Absensi" dibuka, form diisi ulang.
+const _showSectionOriginal=window.showSection;
+window.showSection=function(id){
+  const result=typeof _showSectionOriginal==="function"?_showSectionOriginal(id):false;
+  if(id==="lecturerQR"){
+    setTimeout(()=>{try{initLecturerQRGenerator()}catch(e){console.error("QR refresh:",e)}},0);
+  }
+  return result;
+};
 </script>
 </body>
 </html>
